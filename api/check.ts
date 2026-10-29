@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gradeWriting } from './_lib/ai-questions';
-import { hasAi } from './_lib/ai';
+import { aiReady } from './_lib/ai';
 import { getStore } from './_lib/db';
 import { matchesAccepted, normalizeAnswer } from './_lib/normalize';
 import type { CheckResult } from './_lib/types';
@@ -40,7 +40,7 @@ export async function POST(request: Request): Promise<Response> {
     return result({ correct: true, corrected: answer, explanation: q.explanation, gradedBy: 'exact' });
   }
 
-  if (hasAi()) {
+  if (await aiReady()) {
     try {
       const grade = await gradeWriting({ instruction: q.instruction, prompt: q.prompt, accepted: q.accepted, explanation: q.explanation, answer });
       // A correct alternative becomes an accepted answer, so the next time it is graded instantly.

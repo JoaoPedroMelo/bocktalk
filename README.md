@@ -46,5 +46,6 @@ Alternativa sem GitHub: `npx vercel` nesta pasta (o `.vercelignore` também excl
 ## Observações
 
 - A API não tem autenticação: quem tiver o link pode jogar e, com isso, consumir a cota grátis da IA. Para uso pessoal isso não é problema.
+- Quando uma IA responde que o limite gratuito acabou (HTTP 429), ela fica em pausa pelo tempo que o próprio serviço pede (10 minutos se ele não disser), gravado no banco para valer em todas as instâncias. Nesse tempo o app não chama aquela IA: usa a outra, ou monta a partida com o banco e o gerador por regras. O `/api/status` mostra até quando cada uma está pausada (`pausedUntil`).
 - `NEW_QUESTIONS_PER_MATCH` controla quantas questões a IA cria por partida (padrão 4; `0` desliga a geração).
 - Ao alterar [api/_lib/seed.ts](api/_lib/seed.ts), aumente `SEED_VERSION` em [api/_lib/db.ts](api/_lib/db.ts) para as novas questões entrarem num banco já existente.

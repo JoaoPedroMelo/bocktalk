@@ -27,7 +27,12 @@ export interface Store {
   markServed(ids: string[]): Promise<void>;
   recentPrompts(topics: string[], limit: number): Promise<string[]>;
   counts(): Promise<Record<string, number>>;
+  /** AI providers paused after hitting their free-tier limit: provider name → paused until (epoch ms). */
+  aiPauses(): Promise<Record<string, number>>;
+  pauseAi(provider: string, until: number): Promise<void>;
 }
+
+const PAUSE_PREFIX = 'ai_pause:';
 
 function seedRows(): NewQuestion[] {
   return SEED_QUESTIONS.map((q) => ({ ...q, source: 'book' as const }));
@@ -166,6 +171,17 @@ function createNeonStore(url: string): Store {
       const rows = (await sql`select topic, count(*)::int as n from questions group by topic`) as { topic: string; n: number }[];
       return Object.fromEntries(rows.map((r) => [r.topic, r.n]));
     },
+    // Kept in app_meta so every serverless instance sees the same pause.
+    async aiPauses() {
+      await ensure();
+      const rows = (await sql`select key, value from app_meta where key like ${PAUSE_PREFIX + '%'}`) as { key: string; value: string }[];
+      return Object.fromEntries(rows.map((r) => [r.key.slice(PAUSE_PREFIX.length), Number(r.value)]));
+    },
+    async pauseAi(provider, until) {
+      await ensure();
+      await sql`insert into app_meta (key, value) values (${PAUSE_PREFIX + provider}, ${String(until)})
+                on conflict (key) do update set value = excluded.value`;
+    },
   };
 }
 
@@ -179,6 +195,7 @@ interface MemoryRow extends Question {
 
 function createMemoryStore(): Store {
   const rows: MemoryRow[] = [];
+  const pauses = new Map<string, number>();
   let nextId = 1;
 
   function insertSync(questions: NewQuestion[]): Question[] {
@@ -231,6 +248,12 @@ function createMemoryStore(): Store {
       const out: Record<string, number> = {};
       for (const r of rows) out[r.topic] = (out[r.topic] ?? 0) + 1;
       return out;
+    },
+    async aiPauses() {
+      return Object.fromEntries(pauses);
+    },
+    async pauseAi(provider, until) {
+      pauses.set(provider, until);
     },
   };
 }

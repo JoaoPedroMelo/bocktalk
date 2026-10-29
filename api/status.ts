@@ -1,4 +1,4 @@
-import { aiProviders } from './_lib/ai';
+import { aiPauses, aiProviders } from './_lib/ai';
 import { getStore } from './_lib/db';
 import { json } from './_lib/util';
 
@@ -12,10 +12,12 @@ export async function GET(): Promise<Response> {
   } catch (err) {
     dbError = err instanceof Error ? err.message : String(err);
   }
+  const pauses = await aiPauses();
   return json({
     database: store.kind,
     dbError,
-    ai: aiProviders().map((p) => ({ provider: p.name, model: p.model })),
+    // pausedUntil: set while the provider is skipped after hitting its free-tier limit.
+    ai: aiProviders().map((p) => ({ provider: p.name, model: p.model, pausedUntil: pauses[p.name] ? new Date(pauses[p.name]).toISOString() : undefined })),
     totalQuestions: Object.values(counts).reduce((a, b) => a + b, 0),
     questionsByTopic: counts,
   });

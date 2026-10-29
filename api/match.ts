@@ -1,7 +1,7 @@
 import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 import { generateQuestions } from './_lib/ai-questions';
-import { hasAi } from './_lib/ai';
+import { aiReady } from './_lib/ai';
 import { getStore, type Store } from './_lib/db';
 import { irregularMultiQuestions, proceduralQuestions } from './_lib/procedural';
 import { IRREGULAR_TOPIC, MIXED_TOPIC, TOPICS, findTopic } from './_lib/topics';
@@ -49,7 +49,8 @@ export async function POST(request: Request): Promise<Response> {
   const chosen = [...fixed, ...(fixed.length ? fromBank.filter((q) => q.type !== 'multi') : fromBank).slice(0, MATCH_SIZE - fixed.length)];
   const stats: MatchResponse['stats'] = { fromBank: chosen.length - fixed.length, fromAi: 0, generated: fixed.length };
 
-  if (hasAi() && perMatch > 0) {
+  // A paused provider is skipped without a request; with every provider paused the match is built without AI.
+  if (perMatch > 0 && (await aiReady())) {
     const missing = MATCH_SIZE - chosen.length;
     if (missing > 0) {
       try {

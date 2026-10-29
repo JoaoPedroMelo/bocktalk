@@ -26,7 +26,9 @@ describe('AI path (mocked Groq)', () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     delete process.env.GROQ_API_KEY;
+    delete process.env.GEMINI_API_KEY;
   });
 
   it('generates, validates and stores new questions when the bank runs short', async () => {
@@ -62,6 +64,66 @@ describe('AI path (mocked Groq)', () => {
 
     const second = (await (await check(post({ questionId: q.id, answer: 'i adore sunny days' }))).json()) as CheckResult;
     expect(second.gradedBy).toBe('exact');
+  });
+
+  it('pauses a provider after a 429 for the time it asks, then calls it again', async () => {
+    const limited = vi.fn(async () => new Response('{"error":"rate limited"}', { status: 429, headers: { 'retry-after': '120' } }));
+    vi.stubGlobal('fetch', limited);
+    const { POST } = await import('../match');
+    const { GET: status } = await import('../status');
+    const { getStore } = await import('./db');
+    const excludeAll = async (topic: string) => (await getStore().pick([topic], 500, [])).map((q) => q.id);
+
+    // Bank exhausted on purpose, so the match has to ask the AI right away.
+    const first = (await (await POST(post({ topic: 'clima', exclude: await excludeAll('clima') }))).json()) as MatchResponse;
+    expect(limited).toHaveBeenCalledTimes(1);
+    expect(first.questions).toHaveLength(10);
+
+    const s = (await (await status()).json()) as { ai: { provider: string; pausedUntil?: string }[] };
+    const until = Date.parse(s.ai[0].pausedUntil!);
+    expect(until - Date.now()).toBeGreaterThan(110_000);
+    expect(until - Date.now()).toBeLessThanOrEqual(120_000);
+
+    // While paused: no request at all, and the match still comes back complete.
+    const second = (await (await POST(post({ topic: 'hotel', exclude: await excludeAll('hotel') }))).json()) as MatchResponse;
+    expect(limited).toHaveBeenCalledTimes(1);
+    expect(second.questions).toHaveLength(10);
+    expect(second.stats.aiError).toBeUndefined();
+
+    // Once the pause is over the provider is tried again.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(until + 1000);
+    const ok = vi.fn(async () => chatResponse(generated));
+    vi.stubGlobal('fetch', ok);
+    await POST(post({ topic: 'clima', exclude: await excludeAll('clima') }));
+    expect(ok).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('keeps using Gemini while Groq is paused, and skips AI grading when every provider is paused', async () => {
+    process.env.GEMINI_API_KEY = 'gemini-key';
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('groq') ? new Response('limit', { status: 429 }) : chatResponse(generated),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { POST } = await import('../match');
+    const { POST: check } = await import('../check');
+    const { getStore } = await import('./db');
+    const excludeAll = async (topic: string) => (await getStore().pick([topic], 500, [])).map((q) => q.id);
+
+    await POST(post({ topic: 'clima', exclude: await excludeAll('clima') }));
+    expect(fetchMock.mock.calls.map(([url]) => (String(url).includes('groq') ? 'groq' : 'gemini'))).toEqual(['groq', 'gemini']);
+    fetchMock.mockClear();
+    await POST(post({ topic: 'hotel', exclude: await excludeAll('hotel') }));
+    expect(fetchMock.mock.calls.map(([url]) => (String(url).includes('groq') ? 'groq' : 'gemini'))).toEqual(['gemini']);
+
+    // Gemini hits its limit too (no Retry-After: default pause); grading then compares with the bank only.
+    await getStore().pauseAi('gemini', Date.now() + 60_000);
+    fetchMock.mockClear();
+    const q = (await getStore().pick(['clima'], 500, [])).find((x) => x.type === 'writing')!;
+    const r = (await (await check(post({ questionId: q.id, answer: 'something unexpected here' }))).json()) as CheckResult;
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.gradedBy).toBe('fallback');
   });
 
   it('falls back to the bank when the AI fails', async () => {
