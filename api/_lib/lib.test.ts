@@ -174,6 +174,24 @@ describe('API without database or AI (memory store)', () => {
     delete process.env.MATCHES_PER_HOUR;
   });
 
+  it('refuses oversized bodies before validating them, with or without content-length', async () => {
+    const { POST: match } = await import('../match');
+    const { POST: check } = await import('../check');
+    const huge = JSON.stringify({ topic: 'clima', exclude: Array.from({ length: 50_000 }, (_, i) => String(i)) });
+    expect((await match(new Request('http://local/api', { method: 'POST', body: huge, headers: { 'content-length': String(huge.length) } }))).status).toBe(413);
+    // A streamed body has no content-length, so the cap has to hold while reading.
+    const streamed = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(huge));
+        controller.close();
+      },
+    });
+    expect((await check(new Request('http://local/api', { method: 'POST', body: streamed, duplex: 'half' } as RequestInit))).status).toBe(413);
+    // A normal match, with 500 seen ids, still fits.
+    const seen = Array.from({ length: 500 }, (_, i) => String(100_000 + i));
+    expect((await match(post({ topic: 'clima', exclude: seen }))).status).toBe(200);
+  });
+
   it('rejects unknown topics', async () => {
     const { POST } = await import('../match');
     expect((await POST(post({ topic: 'nope' }))).status).toBe(400);

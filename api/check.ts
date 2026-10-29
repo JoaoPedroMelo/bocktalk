@@ -5,7 +5,7 @@ import { getStore } from './_lib/db';
 import { rateLimit, tokenAllows } from './_lib/guard';
 import { matchesAccepted, normalizeAnswer } from './_lib/normalize';
 import type { CheckResult } from './_lib/types';
-import { json } from './_lib/util';
+import { BODY_TOO_LARGE, json, readJson } from './_lib/util';
 
 const bodySchema = z.object({
   token: z.string().max(4000),
@@ -14,7 +14,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request): Promise<Response> {
-  const parsed = bodySchema.safeParse(await request.json().catch(() => null));
+  const body = await readJson(request);
+  if (body === BODY_TOO_LARGE) return json({ error: 'Requisição grande demais. Recarregue a página.' }, 413);
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return json({ error: 'Requisição inválida. Recarregue a página.' }, 400);
   const { questionId, token } = parsed.data;
   const answer = parsed.data.answer.trim();

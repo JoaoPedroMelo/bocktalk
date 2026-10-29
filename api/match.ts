@@ -7,7 +7,7 @@ import { aiQuestionsLeft, rateLimit, recordAiQuestions, signMatch } from './_lib
 import { irregularMultiQuestions, proceduralQuestions } from './_lib/procedural';
 import { IRREGULAR_TOPIC, MIXED_TOPIC, TOPICS, findTopic } from './_lib/topics';
 import type { MatchResponse, PublicQuestion, Question } from './_lib/types';
-import { intEnv, json, sample, shuffle } from './_lib/util';
+import { BODY_TOO_LARGE, intEnv, json, readJson, sample, shuffle } from './_lib/util';
 
 const MATCH_SIZE = 10;
 /** The irregular-verb drill always includes this many "pick every correct option" questions. */
@@ -36,7 +36,9 @@ function toPublic({ answer: _a, accepted: _c, explanation: _e, ...q }: Question)
  * short. Rule-based questions fill any remaining gap so a match never comes back incomplete.
  */
 export async function POST(request: Request): Promise<Response> {
-  const parsed = bodySchema.safeParse(await request.json().catch(() => null));
+  const body = await readJson(request);
+  if (body === BODY_TOO_LARGE) return json({ error: 'Requisição grande demais. Recarregue a página.' }, 413);
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success || !findTopic(parsed.data.topic)) return json({ error: 'Tema inválido. Volte ao início e escolha outro.' }, 400);
   const { topic } = parsed.data;
   const exclude = parsed.data.exclude ?? [];
