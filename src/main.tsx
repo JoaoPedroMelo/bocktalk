@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
@@ -9,5 +10,7 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <App />
     </ErrorBoundary>
+    {/* Vercel Web Analytics: page views only; it does nothing outside a Vercel deployment. */}
+    <Analytics />
   </StrictMode>,
 );
