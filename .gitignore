@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.local
+.vercel
+*.log
+
+# Course material (copyrighted, ~100 MB). The app only uses the knowledge base extracted into api/_lib.
+*.pdf
+*.docx
+*.xlsx

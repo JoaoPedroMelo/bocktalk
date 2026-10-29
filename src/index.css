@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --page: 238 241 245;
+  --surface: 255 255 255;
+  --text: 29 36 51;
+  --muted: 92 101 120;
+  --line: 214 220 229;
+  --board: 29 36 51;
+  --board-text: 236 240 245;
+  --board-muted: 156 166 186;
+  --signal: 245 197 24;
+  --signal-ink: 29 36 51;
+  --go: 25 135 84;
+  --stop: 200 54 43;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: 15 19 27;
+    --surface: 27 33 46;
+    --text: 232 236 242;
+    --muted: 152 162 180;
+    --line: 50 59 77;
+    --board: 23 29 41;
+    --board-muted: 140 151 172;
+    --go: 72 196 134;
+    --stop: 242 104 88;
+    color-scheme: dark;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-page font-sans text-base text-text antialiased;
+  min-height: 100dvh;
+}
+
+:focus-visible {
+  outline: 3px solid rgb(var(--signal));
+  outline-offset: 2px;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex min-h-[3rem] items-center justify-center gap-2 rounded-lg px-5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-signal text-signal-ink hover:brightness-95;
+  }
+  .btn-quiet {
+    @apply btn border border-line bg-surface text-text hover:border-muted;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.feedback-enter {
+  animation: rise 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feedback-enter {
+    animation: none;
+  }
+}
