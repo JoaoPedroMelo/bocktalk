@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p api/tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p api/tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "allowScripts": {
+    "esbuild": true
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

@@ -14,6 +14,8 @@ Revisão e treino das lições básicas aprendidas com Fernando Bockmann.
 
 ## Rodar no computador
 
+Precisa do Node 22 ou mais novo. No Vercel, a versão do Node é a escolhida em Settings → Build and Deployment (hoje 24.x).
+
 ```bash
 npm install
 npm run dev
