@@ -1,4 +1,4 @@
-import type { MatchResponse, Question } from '../../api/_lib/types';
+import type { MatchResponse, PublicQuestion } from '../../api/_lib/types';
 
 export interface AnswerRecord {
   questionId: string;
@@ -7,13 +7,17 @@ export interface AnswerRecord {
   /** Corrected version of the given answer (writing) or the right option (choice). */
   corrected: string;
   reference: string;
+  /** Multi questions: the options that had to be picked (sent by the server after answering). */
+  accepted?: string[];
   explanation: string;
   skipped?: boolean;
 }
 
 export interface Match {
   topic: string;
-  questions: Question[];
+  questions: PublicQuestion[];
+  /** Signed by the server; required to grade this match's questions. */
+  token: string;
   answers: AnswerRecord[];
   index: number;
   stats: MatchResponse['stats'];
@@ -25,7 +29,8 @@ export interface SessionState {
   seen: string[];
 }
 
-const KEY = 'embarque-session-v1';
+// v2: questions no longer carry their answers and a match needs its token, so v1 matches can't be resumed.
+const KEY = 'bocktalk-session-v2';
 
 export function loadSession(): SessionState {
   try {

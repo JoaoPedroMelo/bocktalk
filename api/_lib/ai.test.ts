@@ -56,13 +56,15 @@ describe('AI path (mocked Groq)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => chatResponse({ correct: true, corrected: 'I adore sunny days!', explanation: 'Correto: adore também funciona.' })));
     const { getStore } = await import('./db');
     const { POST: check } = await import('../check');
+    const { signMatch } = await import('./guard');
     const q = (await getStore().pick(['clima'], 500, [])).find((x) => x.prompt === 'Eu adoro dias ensolarados!')!;
+    const token = await signMatch(getStore(), [q.id]);
 
-    const first = (await (await check(post({ questionId: q.id, answer: 'I adore sunny days!' }))).json()) as CheckResult;
+    const first = (await (await check(post({ token, questionId: q.id, answer: 'I adore sunny days!' }))).json()) as CheckResult;
     expect(first).toMatchObject({ correct: true, gradedBy: 'ai' });
     expect((await getStore().get(q.id))!.accepted).toContain('I adore sunny days!');
 
-    const second = (await (await check(post({ questionId: q.id, answer: 'i adore sunny days' }))).json()) as CheckResult;
+    const second = (await (await check(post({ token, questionId: q.id, answer: 'i adore sunny days' }))).json()) as CheckResult;
     expect(second.gradedBy).toBe('exact');
   });
 
@@ -120,10 +122,32 @@ describe('AI path (mocked Groq)', () => {
     // Gemini hits its limit too (no Retry-After: default pause); grading then compares with the bank only.
     await getStore().pauseAi('gemini', Date.now() + 60_000);
     fetchMock.mockClear();
+    const { signMatch } = await import('./guard');
     const q = (await getStore().pick(['clima'], 500, [])).find((x) => x.type === 'writing')!;
-    const r = (await (await check(post({ questionId: q.id, answer: 'something unexpected here' }))).json()) as CheckResult;
+    const r = (await (await check(post({ token: await signMatch(getStore(), [q.id]), questionId: q.id, answer: 'something unexpected here' }))).json()) as CheckResult;
     expect(fetchMock).not.toHaveBeenCalled();
     expect(r.gradedBy).toBe('fallback');
+  });
+
+  it('stops generating once the daily cap of AI questions is reached', async () => {
+    process.env.AI_QUESTIONS_PER_DAY = '2';
+    const fetchMock = vi.fn(async () => chatResponse(generated));
+    vi.stubGlobal('fetch', fetchMock);
+    const { POST } = await import('../match');
+    const { GET: status } = await import('../status');
+    const { getStore } = await import('./db');
+    const excludeAll = async (topic: string) => (await getStore().pick([topic], 500, [])).map((q) => q.id);
+
+    const first = (await (await POST(post({ topic: 'clima', exclude: await excludeAll('clima') }))).json()) as MatchResponse;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(first.stats.fromAi).toBe(2);
+    expect(((await (await status()).json()) as { aiQuestionsToday: number }).aiQuestionsToday).toBe(2);
+
+    // Cap reached: the next match is built without asking the AI.
+    const second = (await (await POST(post({ topic: 'hotel', exclude: await excludeAll('hotel') }))).json()) as MatchResponse;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second.questions).toHaveLength(10);
+    delete process.env.AI_QUESTIONS_PER_DAY;
   });
 
   it('falls back to the bank when the AI fails', async () => {

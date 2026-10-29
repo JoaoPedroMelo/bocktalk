@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { generateQuestions } from './_lib/ai-questions';
 import { aiReady } from './_lib/ai';
 import { getStore, type Store } from './_lib/db';
+import { aiQuestionsLeft, rateLimit, recordAiQuestions, signMatch } from './_lib/guard';
 import { irregularMultiQuestions, proceduralQuestions } from './_lib/procedural';
 import { IRREGULAR_TOPIC, MIXED_TOPIC, TOPICS, findTopic } from './_lib/topics';
-import type { MatchResponse, Question } from './_lib/types';
+import type { MatchResponse, PublicQuestion, Question } from './_lib/types';
 import { intEnv, json, sample, shuffle } from './_lib/util';
 
 const MATCH_SIZE = 10;
@@ -20,7 +21,13 @@ const bodySchema = z.object({
 async function generateAndStore(store: Store, topics: string[], count: number): Promise<Question[]> {
   const avoid = await store.recentPrompts(topics, 40);
   const { questions } = await generateQuestions(topics, count, avoid);
+  await recordAiQuestions(store, questions.length);
   return store.insert(questions);
+}
+
+/** Drops the answer key: the browser gets it from /api/check, one answered question at a time. */
+function toPublic({ answer: _a, accepted: _c, explanation: _e, ...q }: Question): PublicQuestion {
+  return q;
 }
 
 /**
@@ -30,7 +37,7 @@ async function generateAndStore(store: Store, topics: string[], count: number): 
  */
 export async function POST(request: Request): Promise<Response> {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success || !findTopic(parsed.data.topic)) return json({ error: 'Tema inválido' }, 400);
+  if (!parsed.success || !findTopic(parsed.data.topic)) return json({ error: 'Tema inválido. Volte ao início e escolha outro.' }, 400);
   const { topic } = parsed.data;
   const exclude = parsed.data.exclude ?? [];
 
@@ -41,6 +48,9 @@ export async function POST(request: Request): Promise<Response> {
   const perMatch = Math.min(MATCH_SIZE, intEnv('NEW_QUESTIONS_PER_MATCH', 4));
 
   const store = getStore();
+  const limited = await rateLimit(store, request, 'match', 'Muitas partidas em pouco tempo.');
+  if (limited) return limited;
+
   // Built from the verb table on every match, so the drill never runs out of them; they are stored like any other question.
   const fixed =
     topic === IRREGULAR_TOPIC ? await store.insert(irregularMultiQuestions(IRREGULAR_MULTI, new Set(await store.recentPrompts(bankTopics, 300)))) : [];
@@ -49,12 +59,13 @@ export async function POST(request: Request): Promise<Response> {
   const chosen = [...fixed, ...(fixed.length ? fromBank.filter((q) => q.type !== 'multi') : fromBank).slice(0, MATCH_SIZE - fixed.length)];
   const stats: MatchResponse['stats'] = { fromBank: chosen.length - fixed.length, fromAi: 0, generated: fixed.length };
 
-  // A paused provider is skipped without a request; with every provider paused the match is built without AI.
-  if (perMatch > 0 && (await aiReady())) {
+  // A paused provider is skipped without a request; with every provider paused, or today's cap reached, the match is built without AI.
+  const aiLeft = perMatch > 0 ? await aiQuestionsLeft(store) : 0;
+  if (aiLeft > 0 && (await aiReady())) {
     const missing = MATCH_SIZE - chosen.length;
     if (missing > 0) {
       try {
-        const fresh = await generateAndStore(store, aiTopics, Math.max(missing, perMatch));
+        const fresh = await generateAndStore(store, aiTopics, Math.min(aiLeft, Math.max(missing, perMatch)));
         chosen.push(...fresh.slice(0, missing));
         stats.fromAi = Math.min(fresh.length, missing);
       } catch (err) {
@@ -62,7 +73,7 @@ export async function POST(request: Request): Promise<Response> {
         console.error('[match] AI generation failed:', err);
       }
     } else {
-      waitUntil(generateAndStore(store, aiTopics, perMatch).catch((err) => console.error('[match] background AI generation failed:', err)));
+      waitUntil(generateAndStore(store, aiTopics, Math.min(aiLeft, perMatch)).catch((err) => console.error('[match] background AI generation failed:', err)));
     }
   }
 
@@ -86,5 +97,6 @@ export async function POST(request: Request): Promise<Response> {
 
   const questions = shuffle(chosen).slice(0, MATCH_SIZE);
   await store.markServed(questions.map((q) => q.id));
-  return json({ topic, questions, stats } satisfies MatchResponse);
+  const token = await signMatch(store, questions.map((q) => q.id));
+  return json({ topic, questions: questions.map(toPublic), token, stats } satisfies MatchResponse);
 }

@@ -1,6 +1,6 @@
 import { Check, Loader2, Table2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { Question } from '../../api/_lib/types';
+import type { PublicQuestion as Question } from '../../api/_lib/types';
 import { IRREGULAR_TOPIC, findTopic } from '../../api/_lib/topics';
 import { checkAnswer } from '../lib/api';
 import { wordDiff } from '../lib/diff';
@@ -28,36 +28,38 @@ function Progress({ match }: { match: Match }) {
   );
 }
 
-function Choice({ q, record, onPick }: { q: Question; record?: AnswerRecord; onPick: (option: string) => void }) {
+function Choice({ q, record, busy, onPick }: { q: Question; record?: AnswerRecord; busy: string | null; onPick: (option: string) => void }) {
   useEffect(() => {
-    if (record) return;
+    if (record || busy) return;
     const onKey = (e: KeyboardEvent) => {
       const n = Number(e.key);
       if (n >= 1 && n <= (q.options?.length ?? 0) && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) onPick(q.options![n - 1]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [q, record, onPick]);
+  }, [q, record, busy, onPick]);
 
   return (
     <ul className="grid gap-2.5">
       {q.options!.map((opt, i) => {
-        const isAnswer = opt === q.answer;
+        const isAnswer = opt === record?.reference;
         const isPicked = record?.given === opt;
         let tone = 'border-line bg-surface hover:border-muted';
-        if (record && isAnswer) tone = 'border-go bg-go/10';
+        if (busy === opt) tone = 'border-signal bg-signal/10';
+        else if (record && isAnswer) tone = 'border-go bg-go/10';
         else if (record && isPicked) tone = 'border-stop bg-stop/10';
         else if (record) tone = 'border-line bg-surface opacity-60';
         return (
           <li key={opt}>
             <button
               type="button"
-              disabled={!!record}
+              disabled={!!record || !!busy}
               onClick={() => onPick(opt)}
               className={`flex min-h-[3.5rem] w-full items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-colors disabled:cursor-default ${tone}`}
             >
               <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-line text-sm font-semibold text-muted sm:flex">{i + 1}</span>
               <span className="flex-1">{opt}</span>
+              {busy === opt && <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted" aria-label="Corrigindo" />}
               {record && isAnswer && <Check className="h-5 w-5 shrink-0 text-go" aria-label="Resposta correta" />}
               {record && isPicked && !isAnswer && <X className="h-5 w-5 shrink-0 text-stop" aria-label="Sua escolha" />}
             </button>
@@ -71,12 +73,12 @@ function Choice({ q, record, onPick }: { q: Question; record?: AnswerRecord; onP
 const isTyping = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
 
 /** Pick every correct option, then confirm. After answering, missed options are marked as well as wrong picks. */
-function Multi({ q, record, onConfirm }: { q: Question; record?: AnswerRecord; onConfirm: (picked: string[]) => void }) {
+function Multi({ q, record, busy, onConfirm }: { q: Question; record?: AnswerRecord; busy: boolean; onConfirm: (picked: string[]) => void }) {
   const options = q.options!;
   const [picked, setPicked] = useState<string[]>([]);
   const chosen = record ? record.given.split(', ') : picked;
   const toggle = (opt: string) => setPicked((p) => (p.includes(opt) ? p.filter((o) => o !== opt) : [...p, opt]));
-  const confirm = () => picked.length > 0 && onConfirm(options.filter((o) => picked.includes(o)));
+  const confirm = () => picked.length > 0 && !busy && onConfirm(options.filter((o) => picked.includes(o)));
 
   useEffect(() => {
     setPicked([]);
@@ -98,7 +100,7 @@ function Multi({ q, record, onConfirm }: { q: Question; record?: AnswerRecord; o
     <div className="grid gap-4">
       <ul className="grid gap-2.5 sm:grid-cols-2">
         {options.map((opt, i) => {
-          const isRight = q.accepted.includes(opt);
+          const isRight = record?.accepted?.includes(opt) ?? false;
           const isPicked = chosen.includes(opt);
           let tone = isPicked ? 'border-signal bg-signal/10' : 'border-line bg-surface hover:border-muted';
           let note = '';
@@ -114,7 +116,7 @@ function Multi({ q, record, onConfirm }: { q: Question; record?: AnswerRecord; o
                 type="button"
                 role="checkbox"
                 aria-checked={isPicked}
-                disabled={!!record}
+                disabled={!!record || busy}
                 onClick={() => toggle(opt)}
                 className={`flex min-h-[3.5rem] w-full items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-colors disabled:cursor-default ${tone}`}
               >
@@ -138,8 +140,14 @@ function Multi({ q, record, onConfirm }: { q: Question; record?: AnswerRecord; o
       </ul>
       {!record && (
         <div className="flex items-center gap-3">
-          <button type="button" className="btn-primary flex-1 sm:flex-none" disabled={picked.length === 0} onClick={confirm}>
-            Confirmar
+          <button type="button" className="btn-primary flex-1 sm:flex-none" disabled={picked.length === 0 || busy} onClick={confirm}>
+            {busy ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> Corrigindo
+              </>
+            ) : (
+              'Confirmar'
+            )}
           </button>
           <span className="text-sm text-muted">{picked.length === 0 ? 'Marque uma ou mais' : `${picked.length} marcada${picked.length > 1 ? 's' : ''}`}</span>
         </div>
@@ -214,7 +222,7 @@ function Writing({ q, record, onSubmit }: { q: Question; record?: AnswerRecord; 
       />
       {error && (
         <p className="text-sm text-stop" role="alert">
-          {error} Tente de novo.
+          {error}
         </p>
       )}
       <div className="flex gap-2">
@@ -335,6 +343,14 @@ export function Quiz({ match, onAnswer, onNext, onQuit }: Props) {
   const filledPrompt = record ? filledSentence(q, record.correct ? record.given : record.reference) : null;
   const hasTable = match.topic === IRREGULAR_TOPIC;
   const [tableOpen, setTableOpen] = useState(false);
+  // The answer key lives on the server: choice and multi answers are graded there too, so they wait for a reply.
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBusy(null);
+    setFailure(null);
+  }, [q.id]);
 
   useEffect(() => {
     if (!record) return;
@@ -350,23 +366,30 @@ export function Quiz({ match, onAnswer, onNext, onQuit }: Props) {
     window.scrollTo({ top: 0 });
   }, [match.index]);
 
-  function pick(option: string) {
-    const correct = option === q.answer;
-    onAnswer({ questionId: q.id, given: option, correct, corrected: q.answer, reference: q.answer, explanation: q.explanation });
+  async function grade(given: string, extra: Partial<AnswerRecord> = {}) {
+    setBusy(given);
+    setFailure(null);
+    try {
+      const r = await checkAnswer(match.token, q.id, given);
+      onAnswer({ questionId: q.id, given, correct: r.correct, corrected: r.reference, reference: r.reference, accepted: r.accepted, explanation: r.explanation, ...extra });
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : 'Não foi possível corrigir agora. Tente de novo.');
+    } finally {
+      setBusy(null);
+    }
   }
+
+  const pick = (option: string) => void grade(option);
+  const pickMany = (picked: string[]) => void grade(picked.join(', '));
 
   async function submitWriting(text: string, skipped?: boolean) {
+    // "Não sei" also goes to the server, which is where the answer key is.
+    const r = await checkAnswer(match.token, q.id, skipped ? '' : text);
     if (skipped) {
-      onAnswer({ questionId: q.id, given: '', correct: false, corrected: q.answer, reference: q.answer, explanation: q.explanation, skipped: true });
+      onAnswer({ questionId: q.id, given: '', correct: false, corrected: r.reference, reference: r.reference, explanation: r.explanation, skipped: true });
       return;
     }
-    const r = await checkAnswer(q.id, text);
     onAnswer({ questionId: q.id, given: text.trim(), correct: r.correct, corrected: r.corrected, reference: r.reference, explanation: r.explanation });
-  }
-
-  function pickMany(picked: string[]) {
-    const correct = picked.length === q.accepted.length && q.accepted.every((o) => picked.includes(o));
-    onAnswer({ questionId: q.id, given: picked.join(', '), correct, corrected: q.answer, reference: q.answer, explanation: q.explanation });
   }
 
   return (
@@ -415,8 +438,13 @@ export function Quiz({ match, onAnswer, onNext, onQuit }: Props) {
         </div>
 
         <div className="mt-6">
-          {q.type === 'choice' && <Choice q={q} record={record} onPick={pick} />}
-          {q.type === 'multi' && <Multi q={q} record={record} onConfirm={pickMany} />}
+          {q.type === 'choice' && <Choice q={q} record={record} busy={busy} onPick={pick} />}
+          {q.type === 'multi' && <Multi q={q} record={record} busy={!!busy} onConfirm={pickMany} />}
+          {failure && (
+            <p className="mt-3 text-sm text-stop" role="alert">
+              {failure}
+            </p>
+          )}
           {q.type === 'writing' && <Writing q={q} record={record} onSubmit={submitWriting} />}
         </div>
 

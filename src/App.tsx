@@ -24,11 +24,11 @@ export default function App() {
         const data = await startMatch(topic, session.seen);
         setSession((s) => ({
           seen: [...s.seen, ...data.questions.map((q) => q.id)],
-          match: { topic, questions: data.questions, answers: [], index: 0, stats: data.stats },
+          match: { topic, questions: data.questions, token: data.token, answers: [], index: 0, stats: data.stats },
         }));
         setView({ name: 'match' });
       } catch (e) {
-        setView({ name: 'error', topic, message: e instanceof Error ? e.message : 'Erro desconhecido' });
+        setView({ name: 'error', topic, message: e instanceof Error ? e.message : 'Erro desconhecido. Tente de novo.' });
       }
     },
     [session.seen],
@@ -66,7 +66,7 @@ export default function App() {
     return (
       <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center gap-4 px-4">
         <h1 className="text-xl font-extrabold">A partida não carregou</h1>
-        <p className="text-muted">{view.message}. Verifique sua conexão e tente de novo.</p>
+        <p className="text-muted">{view.message}</p>
         <div className="flex gap-2">
           <button type="button" className="btn-primary" onClick={() => void start(view.topic)}>
             Tentar de novo

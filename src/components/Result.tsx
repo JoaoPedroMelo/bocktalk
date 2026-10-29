@@ -46,7 +46,7 @@ export function Result({ match, onReplay, onHome }: Props) {
         {match.questions.map((q, i) => {
           const a = match.answers[i];
           const correctionDiffers = q.type === 'writing' && a && !a.correct && !a.skipped && a.corrected !== a.reference;
-          const reference = a?.reference ?? q.answer;
+          const reference = a?.reference ?? '';
           const full = filledSentence(q, reference);
           return (
             <li key={q.id} className={`rounded-xl border-l-4 bg-surface p-4 sm:p-5 ${a?.correct ? 'border-go' : 'border-stop'}`}>

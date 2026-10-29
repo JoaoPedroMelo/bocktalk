@@ -1,4 +1,7 @@
-import type { Question } from '../../api/_lib/types';
+import type { PublicQuestion } from '../../api/_lib/types';
+
+/** The read-aloud helpers only look at the wording, so they work with or without the answer key. */
+type Question = Pick<PublicQuestion, 'prompt' | 'instruction' | 'type'>;
 
 /** Pure text helpers for read-aloud. Kept free of browser APIs so every bank question can be checked in tests. */
 

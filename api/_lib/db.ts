@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { SEED_QUESTIONS } from './seed';
 import type { Question, QuestionSource, QuestionType } from './types';
@@ -30,7 +31,13 @@ export interface Store {
   /** AI providers paused after hitting their free-tier limit: provider name → paused until (epoch ms). */
   aiPauses(): Promise<Record<string, number>>;
   pauseAi(provider: string, until: number): Promise<void>;
+  /** Adds `amount` to the counter `key` for the current fixed time window and returns the new total (amount 0 just reads it). */
+  bump(key: string, windowMs: number, amount?: number): Promise<number>;
+  /** Random secret created on first use, for signing match tokens. */
+  secret(): Promise<string>;
 }
+
+const windowStart = (windowMs: number) => Math.floor(Date.now() / windowMs) * windowMs;
 
 const PAUSE_PREFIX = 'ai_pause:';
 
@@ -94,6 +101,7 @@ function createNeonStore(url: string): Store {
     )`;
     await sql`create index if not exists questions_topic_served on questions (topic, times_served)`;
     await sql`create table if not exists app_meta (key text primary key, value text not null)`;
+    await sql`create table if not exists rate_limits (key text primary key, window_start bigint not null, count integer not null)`;
     const meta = (await sql`select value from app_meta where key = 'seed_version'`) as { value: string }[];
     if (meta[0]?.value !== SEED_VERSION) {
       await insertRows(seedRows());
@@ -182,6 +190,25 @@ function createNeonStore(url: string): Store {
       await sql`insert into app_meta (key, value) values (${PAUSE_PREFIX + provider}, ${String(until)})
                 on conflict (key) do update set value = excluded.value`;
     },
+    async bump(key, windowMs, amount = 1) {
+      await ensure();
+      const start = windowStart(windowMs);
+      const rows = (await sql`
+        insert into rate_limits (key, window_start, count) values (${key}, ${start}, ${amount})
+        on conflict (key) do update set
+          count = case when rate_limits.window_start = excluded.window_start then rate_limits.count + excluded.count else excluded.count end,
+          window_start = excluded.window_start
+        returning count`) as { count: number }[];
+      // Now and then, drop counters nobody has touched for a day.
+      if (Math.random() < 0.01) await sql`delete from rate_limits where window_start < ${Date.now() - 2 * 86_400_000}`.catch(() => undefined);
+      return Number(rows[0].count);
+    },
+    async secret() {
+      await ensure();
+      await sql`insert into app_meta (key, value) values ('match_secret', ${randomBytes(32).toString('hex')}) on conflict (key) do nothing`;
+      const rows = (await sql`select value from app_meta where key = 'match_secret'`) as { value: string }[];
+      return rows[0].value;
+    },
   };
 }
 
@@ -196,6 +223,8 @@ interface MemoryRow extends Question {
 function createMemoryStore(): Store {
   const rows: MemoryRow[] = [];
   const pauses = new Map<string, number>();
+  const counters = new Map<string, { start: number; count: number }>();
+  const secret = randomBytes(32).toString('hex');
   let nextId = 1;
 
   function insertSync(questions: NewQuestion[]): Question[] {
@@ -254,6 +283,16 @@ function createMemoryStore(): Store {
     },
     async pauseAi(provider, until) {
       pauses.set(provider, until);
+    },
+    async bump(key, windowMs, amount = 1) {
+      const start = windowStart(windowMs);
+      const current = counters.get(key);
+      const count = (current?.start === start ? current.count : 0) + amount;
+      counters.set(key, { start, count });
+      return count;
+    },
+    async secret() {
+      return secret;
     },
   };
 }

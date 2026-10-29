@@ -2,24 +2,31 @@ import { z } from 'zod';
 import { gradeWriting } from './_lib/ai-questions';
 import { aiReady } from './_lib/ai';
 import { getStore } from './_lib/db';
+import { rateLimit, tokenAllows } from './_lib/guard';
 import { matchesAccepted, normalizeAnswer } from './_lib/normalize';
 import type { CheckResult } from './_lib/types';
 import { json } from './_lib/util';
 
 const bodySchema = z.object({
+  token: z.string().max(4000),
   questionId: z.string().max(32),
   answer: z.string().max(400),
 });
 
 export async function POST(request: Request): Promise<Response> {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return json({ error: 'Requisição inválida' }, 400);
-  const { questionId } = parsed.data;
+  if (!parsed.success) return json({ error: 'Requisição inválida. Recarregue a página.' }, 400);
+  const { questionId, token } = parsed.data;
   const answer = parsed.data.answer.trim();
 
   const store = getStore();
+  const limited = await rateLimit(store, request, 'check', 'Muitas respostas em pouco tempo.');
+  if (limited) return limited;
+  // Only questions handed out in the player's own match can be graded, so the bank can't be swept for answers.
+  if (!(await tokenAllows(store, token, questionId))) return json({ error: 'Esta questão não faz parte da sua partida. Comece uma nova partida.' }, 403);
+
   const q = await store.get(questionId);
-  if (!q) return json({ error: 'Questão não encontrada' }, 404);
+  if (!q) return json({ error: 'Questão não encontrada. Comece uma nova partida.' }, 404);
 
   const reference = q.answer;
   const result = (r: Omit<CheckResult, 'reference'>) => json({ ...r, reference } satisfies CheckResult);
@@ -31,7 +38,7 @@ export async function POST(request: Request): Promise<Response> {
     // The answer is the picked options joined by ", ", in any order.
     const picked = new Set(answer.split(/\s*,\s*/).filter(Boolean));
     const correct = picked.size === q.accepted.length && q.accepted.every((o) => picked.has(o));
-    return result({ correct, corrected: q.answer, explanation: q.explanation, gradedBy: 'exact' });
+    return result({ correct, corrected: q.answer, accepted: q.accepted, explanation: q.explanation, gradedBy: 'exact' });
   }
   if (!normalizeAnswer(answer)) {
     return result({ correct: false, corrected: reference, explanation: q.explanation, gradedBy: 'exact' });

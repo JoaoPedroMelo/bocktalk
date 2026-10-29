@@ -31,13 +31,19 @@ export interface Question {
   source: QuestionSource;
 }
 
+/** What the browser receives: no answer key, so the API can't be scraped for answers. Grading happens in /api/check. */
+export type PublicQuestion = Omit<Question, 'answer' | 'accepted' | 'explanation'>;
+
 export interface MatchResponse {
   topic: string;
-  questions: Question[];
+  questions: PublicQuestion[];
+  /** Signed list of this match's question ids; /api/check only grades those. */
+  token: string;
   stats: { fromBank: number; fromAi: number; generated: number; aiError?: string };
 }
 
 export interface CheckRequest {
+  token: string;
   questionId: string;
   answer: string;
 }
@@ -47,6 +53,8 @@ export interface CheckResult {
   /** The student's answer, corrected (equals the reference when the answer is unusable). */
   corrected: string;
   reference: string;
+  /** Multi questions: every option that had to be picked. */
+  accepted?: string[];
   explanation: string;
   gradedBy: 'exact' | 'ai' | 'fallback';
 }

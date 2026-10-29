@@ -122,11 +122,56 @@ describe('API without database or AI (memory store)', () => {
       seen.push(...data.questions.map((q) => q.id));
     }
     const data = (await (await match(post({ topic: IRREGULAR_TOPIC }))).json()) as MatchResponse;
-    const q = data.questions.find((x) => x.type === 'multi')!;
-    const grade = async (answer: string) => ((await (await check(post({ questionId: q.id, answer }))).json()) as CheckResult).correct;
+    const { getStore } = await import('./db');
+    const q = (await getStore().get(data.questions.find((x) => x.type === 'multi')!.id))!;
+    const grade = async (answer: string) => ((await (await check(post({ token: data.token, questionId: q.id, answer }))).json()) as CheckResult).correct;
     expect(await grade([...q.accepted].reverse().join(', '))).toBe(true);
     expect(await grade(q.accepted.slice(1).join(', '))).toBe(false);
     expect(await grade(q.options!.join(', '))).toBe(false);
+  });
+
+  it('never sends the answer key to the browser', async () => {
+    const { POST } = await import('../match');
+    for (const topic of ['clima', IRREGULAR_TOPIC]) {
+      const data = (await (await POST(post({ topic }))).json()) as MatchResponse;
+      for (const q of data.questions) {
+        expect(q).not.toHaveProperty('answer');
+        expect(q).not.toHaveProperty('accepted');
+        expect(q).not.toHaveProperty('explanation');
+      }
+    }
+  });
+
+  it('grades only the questions of the match the token was issued for', async () => {
+    const { POST: match } = await import('../match');
+    const { POST: check } = await import('../check');
+    const a = (await (await match(post({ topic: 'clima' }))).json()) as MatchResponse;
+    const b = (await (await match(post({ topic: 'hotel' }))).json()) as MatchResponse;
+    const ask = (token: string, questionId: string) => check(post({ token, questionId, answer: 'x' }));
+
+    expect((await ask(a.token, a.questions[0].id)).status).toBe(200);
+    expect((await ask(a.token, b.questions[0].id)).status).toBe(403);
+    // Tampering with the list of ids breaks the signature.
+    const [payload, sig] = a.token.split('.');
+    const ids = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    const forged = `${Buffer.from(JSON.stringify({ ...ids, ids: [...ids.ids, b.questions[0].id] })).toString('base64url')}.${sig}`;
+    expect((await ask(forged, b.questions[0].id)).status).toBe(403);
+    expect((await ask('nonsense', a.questions[0].id)).status).toBe(403);
+    expect((await check(post({ questionId: a.questions[0].id, answer: 'x' }))).status).toBe(400);
+  });
+
+  it('limits matches per IP and per hour', async () => {
+    process.env.MATCHES_PER_HOUR = '2';
+    const { POST } = await import('../match');
+    const from = (ip: string) => new Request('http://local/api', { method: 'POST', body: JSON.stringify({ topic: 'clima' }), headers: { 'x-forwarded-for': ip } });
+    expect((await POST(from('1.1.1.1'))).status).toBe(200);
+    expect((await POST(from('1.1.1.1'))).status).toBe(200);
+    const blocked = await POST(from('1.1.1.1'));
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { error: string }).error).toMatch(/Muitas partidas em pouco tempo\. Tente de novo em \d+ min\./);
+    // Another player is not affected.
+    expect((await POST(from('2.2.2.2'))).status).toBe(200);
+    delete process.env.MATCHES_PER_HOUR;
   });
 
   it('rejects unknown topics', async () => {
@@ -138,10 +183,11 @@ describe('API without database or AI (memory store)', () => {
     const { POST: match } = await import('../match');
     const { POST: check } = await import('../check');
     const data = (await (await match(post({ topic: 'saudacoes' }))).json()) as MatchResponse;
-    const q = data.questions.find((x) => x.type === 'writing')!;
-    const right = (await (await check(post({ questionId: q.id, answer: q.accepted[q.accepted.length - 1].toUpperCase() }))).json()) as CheckResult;
+    const { getStore } = await import('./db');
+    const q = (await getStore().get(data.questions.find((x) => x.type === 'writing')!.id))!;
+    const right = (await (await check(post({ token: data.token, questionId: q.id, answer: q.accepted[q.accepted.length - 1].toUpperCase() }))).json()) as CheckResult;
     expect(right.correct).toBe(true);
-    const wrong = (await (await check(post({ questionId: q.id, answer: 'banana banana' }))).json()) as CheckResult;
+    const wrong = (await (await check(post({ token: data.token, questionId: q.id, answer: 'banana banana' }))).json()) as CheckResult;
     expect(wrong.correct).toBe(false);
     expect(wrong.gradedBy).toBe('fallback');
     expect(wrong.reference).toBe(q.answer);

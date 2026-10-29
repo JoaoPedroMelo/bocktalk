@@ -14,12 +14,15 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       signal: controller.signal,
     });
   } catch (e) {
-    throw new Error(controller.signal.aborted ? 'O servidor demorou demais para responder' : `Sem conexão com o servidor (${e instanceof Error ? e.message : e})`);
+    throw new Error(
+      controller.signal.aborted ? 'O servidor demorou demais para responder. Tente de novo.' : 'Sem conexão com o servidor. Verifique sua internet e tente de novo.',
+    );
   } finally {
     window.clearTimeout(timer);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
+  // Server errors are full sentences ("Muitas partidas em pouco tempo. Tente de novo em 12 min.").
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? `O servidor respondeu com erro ${res.status}. Tente de novo.`);
   return data as T;
 }
 
@@ -27,6 +30,6 @@ export function startMatch(topic: string, exclude: string[]): Promise<MatchRespo
   return post('/api/match', { topic, exclude: exclude.slice(-400) });
 }
 
-export function checkAnswer(questionId: string, answer: string): Promise<CheckResult> {
-  return post('/api/check', { questionId, answer });
+export function checkAnswer(token: string, questionId: string, answer: string): Promise<CheckResult> {
+  return post('/api/check', { token, questionId, answer });
 }
